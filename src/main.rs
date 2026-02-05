@@ -1,9 +1,9 @@
 use repopulse::application::usecases::{HandleEventUseCase, RunOnceUseCase};
 use repopulse::domain::{RepoId, WatchKind, WatchTarget};
+use repopulse::infrastructure::github_release_provider::GitHubReleaseProvider;
+use repopulse::infrastructure::sqlite_store::SqliteEventStore;
 use repopulse::infrastructure::{
-    console_notifier::ConsoleNotifier,
-    fake_provider::FakeWatchProvider,
-    memory_store::{InMemoryEventStore, InMemoryTargetRepository},
+    console_notifier::ConsoleNotifier, memory_store::InMemoryTargetRepository,
 };
 
 #[tokio::main]
@@ -19,8 +19,12 @@ async fn main() {
 
     // 2) 组装依赖 (infrastructure)
     let target_repo = InMemoryTargetRepository::new(targets);
-    let provider = FakeWatchProvider::new(); // 每次 check 返回固定 event (用于跑通)
-    let store = InMemoryEventStore::new();
+    // let provider = FakeWatchProvider::new(); // 每次 check 返回固定 event (用于跑通)
+    let provider = GitHubReleaseProvider::new(std::env::var("GITHUB_TOKEN").ok());
+    // let store = InMemoryEventStore::new();
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./state.db".to_string());
+
+    let store = SqliteEventStore::new(&db_url).await.expect("sqlite store");
     let notifier = ConsoleNotifier::new();
 
     // 3) 组装用例 (application)
