@@ -1285,6 +1285,7 @@ name = "repopulse"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "dotenvy",
  "reqwest",
  "serde",
  "sqlx",
