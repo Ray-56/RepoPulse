@@ -26,4 +26,5 @@ target
 /target
 
 .env
+data/
 state.db

@@ -1,0 +1,11 @@
+services:
+  repopulse:
+    build: .
+    container_name: repopulse
+    restart: unless-stopped
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      FEISHU_WEBHOOK: ${FEISHU_WEBHOOK}
+      DATABASE_URL: sqlite:/data/state.db
+    volumes:
+      - ./data:/data

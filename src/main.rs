@@ -14,9 +14,7 @@ async fn main() {
     // - first try current working directory
     // - then fallback to project root (useful when running from subdirs)
     if dotenvy::dotenv().is_err() {
-        let _ = dotenvy::from_path(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".env"),
-        );
+        let _ = dotenvy::from_path(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".env"));
     }
 
     // 1) 准备 targets(之后会来自 config/DB)
@@ -33,7 +31,8 @@ async fn main() {
     // let provider = FakeWatchProvider::new(); // 每次 check 返回固定 event (用于跑通)
     let provider = GitHubReleaseProvider::new(std::env::var("GITHUB_TOKEN").ok());
     // let store = InMemoryEventStore::new();
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./state.db".to_string());
+    let db_url =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:/data/state.db".to_string());
 
     let store = SqliteEventStore::new(&db_url).await.expect("sqlite store");
     // let notifier = ConsoleNotifier::new();
