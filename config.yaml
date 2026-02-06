@@ -1,0 +1,7 @@
+poll_interval_seconds: 600
+
+targets:
+  - type: github_release
+    repo: "pedroslopez/whatsapp-web.js"
+    labels: ["whatsapp"]
+    enabled: true
