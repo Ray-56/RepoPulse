@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use tracing::info;
 
 use crate::application::{AppResult, Notifier};
 use crate::domain::Event;
@@ -14,13 +15,13 @@ impl ConsoleNotifier {
 #[async_trait]
 impl Notifier for ConsoleNotifier {
     async fn notify(&self, event: &Event) -> AppResult<()> {
-        println!(
-            "NOTIFY: type={:?} subject={} {} -> {} url={}",
-            event.event_type,
-            event.subject,
-            event.old_value.clone().unwrap_or_else(|| "(none".into()),
-            event.new_value,
-            event.url.clone().unwrap_or_else(|| "(none)".into())
+        info!(
+          event_type = ?event.event_type,
+          subject = %event.subject,
+          old = %event.old_value.clone().unwrap_or_else(|| "(none)".into()),
+          new = %event.new_value,
+          url = %event.url.clone().unwrap_or_else(|| "(none)".into()),
+          "notify"
         );
         Ok(())
     }

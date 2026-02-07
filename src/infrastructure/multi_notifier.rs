@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use tracing::warn;
 
 use crate::application::{AppResult, Notifier};
 use crate::domain::Event;
@@ -16,8 +17,19 @@ impl MultiNotifier {
 #[async_trait]
 impl Notifier for MultiNotifier {
     async fn notify(&self, event: &Event) -> AppResult<()> {
-        // 单个渠道失败不影响其它渠道：这里选择“尽量发”
-        // v1: 简单处理，后续可以记录 notify_log
+        for (idx, n) in self.notifiers.iter().enumerate() {
+            if let Err(e) = n.notify(event).await {
+                warn!(
+                    notifier_index = idx,
+                    event_id = %event.event_id,
+                    err = %format!("{e}"),
+                    "notifier failed"
+                );
+            }
+        }
+        Ok(())
+    }
+    /* async fn notify(&self, event: &Event) -> AppResult<()> {
         let mut last_err = None;
 
         for n in &self.notifiers {
@@ -31,5 +43,5 @@ impl Notifier for MultiNotifier {
         }
 
         Ok(())
-    }
+    } */
 }
