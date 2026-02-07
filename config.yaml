@@ -5,3 +5,14 @@ targets:
     repo: "pedroslopez/whatsapp-web.js"
     labels: ["whatsapp"]
     enabled: true
+
+  - type: github_branch
+    repo: "pedroslopez/whatsapp-web.js"
+    branch: "main"
+    labels: ["whatsapp"]
+    enabled: true
+
+  - type: npm_latest
+    package: "whatsapp-web.js"
+    labels: ["whatsapp"]
+    enabled: true

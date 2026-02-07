@@ -2,9 +2,11 @@ use clap::Parser;
 
 use repopulse::application::usecases::{HandleEventUseCase, RunOnceUseCase};
 use repopulse::infrastructure::{
-    console_notifier::ConsoleNotifier, feishu_notifier::FeishuNotifier,
+    composite_provider::CompositeWatchProvider, console_notifier::ConsoleNotifier,
+    feishu_notifier::FeishuNotifier, github_branch_provider::GitHubBranchProvider,
     github_release_provider::GitHubReleaseProvider, memory_store::InMemoryTargetRepository,
-    multi_notifier::MultiNotifier, sqlite_store::SqliteEventStore,
+    multi_notifier::MultiNotifier, npm_latest_provider::NpmLatestProvider,
+    sqlite_store::SqliteEventStore,
 };
 use repopulse::interfaces::config::Config;
 
@@ -52,7 +54,13 @@ async fn main() {
 
     // 2) build infra
     let target_repo = InMemoryTargetRepository::new(targets);
-    let provider = GitHubReleaseProvider::new(std::env::var("GITHUB_TOKEN").ok());
+    // let provider = GitHubReleaseProvider::new(std::env::var("GITHUB_TOKEN").ok());
+    let token = std::env::var("GITHUB_TOKEN").ok();
+    let provider = CompositeWatchProvider::new(
+        Box::new(GitHubReleaseProvider::new(token.clone())),
+        Box::new(GitHubBranchProvider::new(token.clone())),
+        Box::new(NpmLatestProvider::new()),
+    );
     let db_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:/data/state.db".to_string());
     let store = SqliteEventStore::new(&db_url).await.expect("sqlite store");
