@@ -80,11 +80,13 @@ async fn main() {
     }
 
     let notifier = MultiNotifier::new(notifiers);
+    let cooldown = cfg.cooldown_seconds.unwrap_or(0);
 
     // 3) usecases
     let handle_event = HandleEventUseCase {
         store: &store,
         notifier: &notifier,
+        cooldown_seconds: cooldown,
     };
     let run_once = RunOnceUseCase {
         targets: &target_repo,

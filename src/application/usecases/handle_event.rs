@@ -4,19 +4,49 @@ use crate::domain::Event;
 pub struct HandleEventUseCase<'a> {
     pub store: &'a dyn EventStore,
     pub notifier: &'a dyn Notifier,
+    pub cooldown_seconds: u64, // 0 means disabled
 }
 
 impl<'a> HandleEventUseCase<'a> {
-    pub async fn execute(&self, event: &Event) -> AppResult<()> {
-        // v1: only dedup; cooldown later in v1 step 7
+    pub async fn execute(&self, event: &Event, target_id: &str) -> AppResult<()> {
+        // 1) dedup by event_id
         if self.store.has_seen(&event.event_id).await? {
             return Ok(());
         }
 
+        // 2) persist event & seen
         self.store.append_event(event).await?;
         self.store.mark_seen(&event.event_id).await?;
-        self.notifier.notify(event).await?;
 
+        // 3) cooldown policy (ByTargetAndType)
+        if self.cooldown_seconds > 0 {
+            let scope_key = format!("{}|{:?}", target_id, event.event_type);
+            let now = epoch_seconds();
+
+            if let Some(last) = self.store.get_last_notified(&scope_key).await? {
+                let elapsed = now.saturating_sub(last);
+                if elapsed < self.cooldown_seconds as i64 {
+                    // within cooldown: skip notifying
+                    return Ok(());
+                }
+            }
+
+            // send + record
+            self.notifier.notify(event).await?;
+            self.store.set_last_notified(&scope_key, now).await?;
+            return Ok(());
+        }
+
+        // no cooldown
+        self.notifier.notify(event).await?;
         Ok(())
     }
+}
+
+fn epoch_seconds() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }

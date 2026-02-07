@@ -52,6 +52,25 @@ impl EventStore for InMemoryEventStore {
         inner.events.push(event.clone());
         Ok(())
     }
+
+    async fn get_last_notified(&self, scope_key: &str) -> AppResult<Option<i64>> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| AppError::Storage("lock poisoned".into()))?;
+        Ok(inner.meta.get(scope_key).and_then(|v| v.parse().ok()))
+    }
+
+    async fn set_last_notified(&self, scope_key: &str, epoch_seconds: i64) -> AppResult<()> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| AppError::Storage("lock poisoned".into()))?;
+        inner
+            .meta
+            .insert(scope_key.to_string(), epoch_seconds.to_string());
+        Ok(())
+    }
 }
 
 #[derive(Clone)]

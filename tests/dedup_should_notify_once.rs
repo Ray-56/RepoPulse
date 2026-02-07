@@ -51,6 +51,7 @@ async fn should_notify_only_once_for_same_event() {
     let handle_event = HandleEventUseCase {
         store: &store,
         notifier: &notifier,
+        cooldown_seconds: 0,
     };
     let run_once = RunOnceUseCase {
         targets: &target_repo,

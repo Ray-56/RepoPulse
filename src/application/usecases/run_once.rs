@@ -16,7 +16,7 @@ impl<'a> RunOnceUseCase<'a> {
             }
 
             if let Some(event) = self.provider.check(&t).await? {
-                self.handle_event.execute(&event).await?;
+                self.handle_event.execute(&event, &t.id).await?;
             }
         }
         Ok(())

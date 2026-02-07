@@ -58,6 +58,18 @@ impl SqliteEventStore {
         .await
         .map_err(|e| AppError::Storage(e.to_string()))?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS notify_log (
+                scope_key TEXT PRIMARY KEY,
+                last_sent_at INTEGER NOT NULL
+            );
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+
         Ok(())
     }
 }
@@ -107,6 +119,33 @@ impl EventStore for SqliteEventStore {
         .bind(&event.occurred_at.as_deref())
         .bind(&event.detected_at)
         .bind(event.url.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn get_last_notified(&self, scope_key: &str) -> AppResult<Option<i64>> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT last_sent_at FROM notify_log WHERE scope_key = ? LIMIT 1")
+                .bind(scope_key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+
+        Ok(row.map(|t| t.0))
+    }
+
+    async fn set_last_notified(&self, scope_key: &str, epoch_seconds: i64) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO notify_log(scope_key, last_sent_at) VALUES(?, ?)
+            ON CONFLICT(scope_key) DO UPDATE SET last_sent_at=excluded.last_sent_at
+            "#,
+        )
+        .bind(scope_key)
+        .bind(epoch_seconds)
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(e.to_string()))?;

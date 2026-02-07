@@ -5,6 +5,7 @@ use crate::domain::{RepoId, WatchKind, WatchTarget};
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub poll_interval_seconds: u64,
+    pub cooldown_seconds: Option<u64>,
     pub targets: Vec<TargetCfg>,
 }
 
