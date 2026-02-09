@@ -71,6 +71,14 @@ impl EventStore for InMemoryEventStore {
             .insert(scope_key.to_string(), epoch_seconds.to_string());
         Ok(())
     }
+
+    async fn list_events(&self, limit: u32) -> AppResult<Vec<Event>> {
+        let inner = self.inner.lock().map_err(|_| AppError::Storage("lock poisoned".into()))?;
+        let mut v = inner.events.clone();
+        v.reverse(); // newest first (since we push at end)
+        v.truncate(limit as usize);
+        Ok(v)
+    }
 }
 
 #[derive(Clone)]

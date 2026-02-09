@@ -1,6 +1,8 @@
 use std::fmt;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RepoId {
     owner: String,
     name: String,
@@ -29,11 +31,11 @@ pub enum RepoIdError {
     InvalidFormat(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Source {
     GitHub,
     Npm,
-    WhatsappWeb,
+    WhatsAppWeb,
 }
 
 impl fmt::Display for Source {
@@ -41,7 +43,7 @@ impl fmt::Display for Source {
         match self {
             Source::GitHub => write!(f, "github"),
             Source::Npm => write!(f, "npm"),
-            Source::WhatsappWeb => write!(f, "whatsapp-web"),
+            Source::WhatsAppWeb => write!(f, "whatsapp-web"),
         }
     }
 }

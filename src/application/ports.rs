@@ -29,6 +29,7 @@ pub trait EventStore: Send + Sync {
     async fn append_event(&self, event: &Event) -> AppResult<()>;
     async fn get_last_notified(&self, scope_key: &str) -> AppResult<Option<i64>>;
     async fn set_last_notified(&self, scope_key: &str, epoch_seconds: i64) -> AppResult<()>;
+    async fn list_events(&self, limit: u32) -> AppResult<Vec<Event>>;
 }
 
 /// Provide list of targets (from config/DB)

@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 use repopulse::application::usecases::{HandleEventUseCase, RunOnceUseCase};
@@ -9,7 +10,10 @@ use repopulse::infrastructure::{
     multi_notifier::MultiNotifier, npm_latest_provider::NpmLatestProvider,
     sqlite_store::SqliteEventStore,
 };
-use repopulse::interfaces::config::Config;
+use repopulse::interfaces::{
+    config::Config,
+    http_api::{ApiState, build_router},
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "repopulse")]
@@ -25,6 +29,10 @@ struct Args {
     /// Do not send external notifications (console only)
     #[arg(long)]
     dry_run: bool,
+
+    /// Enable HTTP API  service at address (e.g. 0.0.0.0:8080). If not set, HTTP is disabled.
+    #[arg(long)]
+    http_addr: Option<String>,
 }
 
 #[tokio::main]
@@ -38,6 +46,7 @@ async fn main() {
         let _ = dotenvy::from_path(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".env"));
     }
     let args = Args::parse();
+    let mut http_enabled = false;
 
     // 1) load config
     let cfg = match Config::load_from_file(&args.config) {
@@ -60,7 +69,6 @@ async fn main() {
 
     // 2) build infra
     let target_repo = InMemoryTargetRepository::new(targets);
-    // let provider = GitHubReleaseProvider::new(std::env::var("GITHUB_TOKEN").ok());
     let token = std::env::var("GITHUB_TOKEN").ok();
     let provider = CompositeWatchProvider::new(
         Box::new(GitHubReleaseProvider::new(token.clone())),
@@ -88,17 +96,38 @@ async fn main() {
     let notifier = MultiNotifier::new(notifiers);
     let cooldown = cfg.cooldown_seconds.unwrap_or(0);
 
+    let target_repo = Arc::new(target_repo);
+    let store = Arc::new(store);
+
     // 3) usecases
     let handle_event = HandleEventUseCase {
-        store: &store,
+        store: store.as_ref(),
         notifier: &notifier,
         cooldown_seconds: cooldown,
     };
-    let run_once = RunOnceUseCase {
-        targets: &target_repo,
+    let run_once: RunOnceUseCase<'_> = RunOnceUseCase {
+        targets: target_repo.as_ref(),
         provider: &provider,
         handle_event,
     };
+
+    if let Some(addr) = args.http_addr.clone() {
+        let state = ApiState {
+            store: store.clone(),
+            targets: target_repo.clone(),
+        };
+        let app = build_router(state);
+
+        tracing::info!(%addr, "http api enabled");
+
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::bind(&addr)
+                .await
+                .expect("bind http addr");
+            axum::serve(listener, app).await.expect("http serve");
+        });
+        http_enabled = true;
+    }
 
     // 4) run
     if args.once {
@@ -107,6 +136,12 @@ async fn main() {
             std::process::exit(1);
         }
         tracing::info!("run once completed");
+
+        if http_enabled {
+            tracing::info!("http server is running; press Ctrl+C to exit");
+            let _ = tokio::signal::ctrl_c().await;
+            tracing::info!("Ctrl+C received, shutting down");
+        }
         return;
     }
 

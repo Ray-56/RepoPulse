@@ -19,7 +19,7 @@ impl WatchProvider for FakeWatchProvider {
             crate::domain::WatchKind::GitHubRelease { .. } => EventType::GitHubRelease,
             crate::domain::WatchKind::GitHubBranch { .. } => EventType::GitHubBranch,
             crate::domain::WatchKind::NpmLatest { .. } => EventType::NpmLatest,
-            crate::domain::WatchKind::WhatsappWebVersion {} => EventType::WhatsappWebVersion,
+            crate::domain::WatchKind::WhatsAppWebVersion {} => EventType::WhatsAppWebVersion,
         };
 
         let subject = target.kind.subject();

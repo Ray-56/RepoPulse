@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use super::{RepoId, Source};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WatchTarget {
     pub id: String, // stable id, e.g. "github:owner/repo:release"
     pub enabled: bool,
@@ -8,12 +10,12 @@ pub struct WatchTarget {
     pub kind: WatchKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WatchKind {
     GitHubRelease { repo: RepoId },
     GitHubBranch { repo: RepoId, branch: String },
     NpmLatest { package: String },
-    WhatsappWebVersion {}, // v1 reserved
+    WhatsAppWebVersion {}, // v1 reserved
 }
 
 impl WatchKind {
@@ -22,7 +24,7 @@ impl WatchKind {
             WatchKind::GitHubRelease { .. } => Source::GitHub,
             WatchKind::GitHubBranch { .. } => Source::GitHub,
             WatchKind::NpmLatest { .. } => Source::Npm,
-            WatchKind::WhatsappWebVersion { .. } => Source::WhatsappWeb,
+            WatchKind::WhatsAppWebVersion { .. } => Source::WhatsAppWeb,
         }
     }
 
@@ -31,7 +33,7 @@ impl WatchKind {
             WatchKind::GitHubRelease { repo } => repo.as_str(),
             WatchKind::GitHubBranch { repo, branch } => format!("{}#{}", repo.as_str(), branch),
             WatchKind::NpmLatest { package } => package.clone(),
-            WatchKind::WhatsappWebVersion { .. } => "whatsapp-web".to_string(),
+            WatchKind::WhatsAppWebVersion { .. } => "whatsapp-web".to_string(),
         }
     }
 }

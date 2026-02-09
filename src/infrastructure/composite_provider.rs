@@ -30,7 +30,7 @@ impl WatchProvider for CompositeWatchProvider {
             WatchKind::GitHubRelease { .. } => self.github_release.check(target).await,
             WatchKind::GitHubBranch { .. } => self.github_branch.check(target).await,
             WatchKind::NpmLatest { .. } => self.npm_latest.check(target).await,
-            WatchKind::WhatsappWebVersion { .. } => Err(AppError::Provider(
+            WatchKind::WhatsAppWebVersion { .. } => Err(AppError::Provider(
                 "WhatsAppWebVersion provider not implemented".into(),
             )),
         }

@@ -1,14 +1,16 @@
+use serde::{Deserialize, Serialize};
+
 use super::Source;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventType {
     GitHubRelease,
     GitHubBranch,
     NpmLatest,
-    WhatsappWebVersion,
+    WhatsAppWebVersion,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     pub event_id: String, // idempotency key
     pub event_type: EventType,
@@ -18,7 +20,7 @@ pub struct Event {
     pub new_value: String,
     /// TODO: upgrade to chrono datetime for better timezone handling.
     pub occurred_at: Option<String>, // upstream time if known (RFC3339 string for now)
-    pub detected_at: String,         // local time (RFC3339 string for now)
+    pub detected_at: String, // local time (RFC3339 string for now)
     pub url: Option<String>,
 }
 

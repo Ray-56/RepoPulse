@@ -152,6 +152,64 @@ impl EventStore for SqliteEventStore {
 
         Ok(())
     }
+
+    async fn list_events(&self, limit: u32) -> AppResult<Vec<Event>> {
+        // 用 rowid 倒序拉最新（不依赖 detected_at 的格式）
+        let limit_i64 = i64::from(limit);
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+              event_id,
+              event_type,
+              source,
+              subject,
+              old_value,
+              new_value,
+              occurred_at,
+              detected_at,
+              url
+            FROM events
+            ORDER BY rowid DESC
+            LIMIT ?
+            "#,
+            limit_i64
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let event_type = match r.event_type.as_str() {
+                "GitHubRelease" => crate::domain::EventType::GitHubRelease,
+                "GitHubBranch" => crate::domain::EventType::GitHubBranch,
+                "NpmLatest" => crate::domain::EventType::NpmLatest,
+                "WhatsAppWebVersion" => crate::domain::EventType::WhatsAppWebVersion,
+                _ => crate::domain::EventType::GitHubRelease, // fallback（也可改成 Err）
+            };
+
+            let source = match r.source.as_str() {
+                "github" => crate::domain::Source::GitHub,
+                "npm" => crate::domain::Source::Npm,
+                "whatsapp-web" => crate::domain::Source::WhatsAppWeb,
+                _ => crate::domain::Source::GitHub,
+            };
+
+            out.push(crate::domain::Event {
+                event_id: r.event_id.unwrap_or_default(),
+                event_type,
+                source,
+                subject: r.subject,
+                old_value: r.old_value,
+                new_value: r.new_value,
+                occurred_at: r.occurred_at,
+                detected_at: r.detected_at,
+                url: r.url,
+            });
+        }
+
+        Ok(out)
+    }
 }
 
 fn now_string() -> String {
