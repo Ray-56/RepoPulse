@@ -53,6 +53,20 @@ impl EventStore for InMemoryEventStore {
         Ok(())
     }
 
+    async fn append_event_record(&self, record: &crate::application::EventRecord) -> AppResult<()> {
+        // v1: in-memory 只保存 event 本地即可
+        self.append_event(&record.event).await
+    }
+
+    async fn list_events_filtered(
+        &self,
+        query: crate::application::EventQuery,
+    ) -> AppResult<Vec<Event>> {
+        // v1: 为了先过编译与跑通 API, in-memory 退化为 limit 查询
+        let limit = query.limit.min(500);
+        self.list_events(limit).await
+    }
+
     async fn get_last_notified(&self, scope_key: &str) -> AppResult<Option<i64>> {
         let inner = self
             .inner
@@ -73,7 +87,10 @@ impl EventStore for InMemoryEventStore {
     }
 
     async fn list_events(&self, limit: u32) -> AppResult<Vec<Event>> {
-        let inner = self.inner.lock().map_err(|_| AppError::Storage("lock poisoned".into()))?;
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| AppError::Storage("lock poisoned".into()))?;
         let mut v = inner.events.clone();
         v.reverse(); // newest first (since we push at end)
         v.truncate(limit as usize);

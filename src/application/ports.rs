@@ -15,6 +15,23 @@ pub enum AppError {
 
 pub type AppResult<T> = Result<T, AppError>;
 
+#[derive(Debug, Clone)]
+pub struct EventRecord {
+    pub event: crate::domain::Event,
+    pub target_id: String,
+    pub labels: Vec<String>,
+    pub detected_at_epoch: i64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct EventQuery {
+    pub since_epoch: Option<i64>,
+    pub limit: u32,
+    pub label: Option<String>,
+    pub event_type: Option<crate::domain::EventType>,
+    pub subject: Option<String>,
+}
+
 /// Produce an Event if a change is detected for a target.
 #[async_trait]
 pub trait WatchProvider: Send + Sync {
@@ -26,10 +43,21 @@ pub trait WatchProvider: Send + Sync {
 pub trait EventStore: Send + Sync {
     async fn has_seen(&self, event_id: &str) -> AppResult<bool>;
     async fn mark_seen(&self, event_id: &str) -> AppResult<()>;
+
+    // 旧接口: 保留(可以内部转调 append_event_record)
     async fn append_event(&self, event: &Event) -> AppResult<()>;
+
+    // 新接口: 带 target_id / labels / epoch
+    async fn append_event_record(&self, record: &EventRecord) -> AppResult<()>;
+
+    // 旧接口: 保留(给 /events?limit 简单用)
+    async fn list_events(&self, limit: u32) -> AppResult<Vec<Event>>;
+
+    // 新接口: 用于过滤查询
+    async fn list_events_filtered(&self, query: EventQuery) -> AppResult<Vec<Event>>;
+
     async fn get_last_notified(&self, scope_key: &str) -> AppResult<Option<i64>>;
     async fn set_last_notified(&self, scope_key: &str, epoch_seconds: i64) -> AppResult<()>;
-    async fn list_events(&self, limit: u32) -> AppResult<Vec<Event>>;
 }
 
 /// Provide list of targets (from config/DB)

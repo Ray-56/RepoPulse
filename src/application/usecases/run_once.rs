@@ -22,7 +22,8 @@ impl<'a> RunOnceUseCase<'a> {
             match self.provider.check(&t).await {
                 Ok(Some(event)) => {
                     info!(target_id = %target_id, event_id = %event.event_id, "event detected");
-                    if let Err(e) = self.handle_event.execute(&event, &target_id).await {
+                    let labels = t.labels.clone();
+                    if let Err(e) = self.handle_event.execute(&event, &target_id, &labels).await {
                         warn!(target_id = %target_id, error = %e, "handle event failed");
                     }
                 }

@@ -8,14 +8,26 @@ pub struct HandleEventUseCase<'a> {
 }
 
 impl<'a> HandleEventUseCase<'a> {
-    pub async fn execute(&self, event: &Event, target_id: &str) -> AppResult<()> {
+    pub async fn execute(
+        &self,
+        event: &Event,
+        target_id: &str,
+        labels: &[String],
+    ) -> AppResult<()> {
         // 1) dedup by event_id
         if self.store.has_seen(&event.event_id).await? {
             return Ok(());
         }
 
         // 2) persist event & seen
-        self.store.append_event(event).await?;
+        let now_epoch = epoch_seconds();
+        let record = crate::application::EventRecord {
+            event: event.clone(),
+            target_id: target_id.to_string(),
+            labels: labels.to_vec(),
+            detected_at_epoch: now_epoch,
+        };
+        self.store.append_event_record(&record).await?;
         self.store.mark_seen(&event.event_id).await?;
 
         // 3) cooldown policy (ByTargetAndType)
