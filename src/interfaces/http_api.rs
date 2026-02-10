@@ -65,11 +65,25 @@ async fn list_events(
         None => None,
     };
 
+    let event_type = match q.r#type.as_deref() {
+        Some(t) => match parse_type(t) {
+            Some(et) => Some(et),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "invalid type (release/branch/npm/waweb)".to_string(),
+                )
+                    .into_response();
+            }
+        },
+        None => None,
+    };
+
     let query = crate::application::EventQuery {
         limit,
         since_epoch,
         label: q.label.clone(),
-        event_type: q.r#type.as_deref().and_then(parse_type),
+        event_type,
         subject: q.subject.clone(),
     };
 
@@ -77,11 +91,6 @@ async fn list_events(
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("error: {e}")).into_response(),
     }
-
-    // match state.store.list_events(limit).await {
-    //     Ok(v) => Json(v).into_response(),
-    //     Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("error: {e}")).into_response(),
-    // }
 }
 
 fn now_epoch() -> i64 {

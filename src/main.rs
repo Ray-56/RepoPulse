@@ -33,6 +33,10 @@ struct Args {
     /// Enable HTTP API  service at address (e.g. 0.0.0.0:8080). If not set, HTTP is disabled.
     #[arg(long)]
     http_addr: Option<String>,
+
+    /// Enable MCP server (stdio)
+    #[arg(long)]
+    mcp: bool,
 }
 
 #[tokio::main]
@@ -130,6 +134,19 @@ async fn main() {
     }
 
     // 4) run
+    if args.mcp {
+        tracing::info!("starting mcp server (stdio)");
+        let server = repopulse::interfaces::mcp::McpServer {
+            store: store.clone(),
+            targets: target_repo.clone(),
+        };
+        if let Err(e) = server.serve().await {
+            tracing::error!("mcp server error: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if args.once {
         if let Err(e) = run_once.execute().await {
             tracing::error!("RunOnce failed: {e}");
@@ -146,7 +163,6 @@ async fn main() {
     }
 
     tracing::info!(poll_interval = poll_interval, "polling started");
-
     loop {
         if let Err(e) = run_once.execute().await {
             tracing::error!("RunOnce failed: {e}");
