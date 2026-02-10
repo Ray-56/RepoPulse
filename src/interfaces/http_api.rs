@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
 };
@@ -15,6 +15,7 @@ use crate::application::{EventStore, TargetRepository};
 pub struct ApiState {
     pub store: Arc<dyn EventStore>,
     pub targets: Arc<dyn TargetRepository>,
+    pub api_token: Option<String>,
 }
 
 pub fn build_router(state: ApiState) -> Router {
@@ -29,7 +30,10 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
 
-async fn list_targets(State(state): State<ApiState>) -> impl IntoResponse {
+async fn list_targets(State(state): State<ApiState>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err((code, msg)) = check_auth(&headers, &state.api_token) {
+        return (code, msg).into_response();
+    }
     match state.targets.list_enabled_targets().await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("error: {e}")).into_response(),
@@ -48,7 +52,11 @@ struct EventsQuery {
 async fn list_events(
     State(state): State<ApiState>,
     Query(q): Query<EventsQuery>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
+    if let Err((code, msg)) = check_auth(&headers, &state.api_token) {
+        return (code, msg).into_response();
+    }
     let limit = q.limit.unwrap_or(100).min(500);
 
     let since_epoch = match q.since.as_deref() {
@@ -90,6 +98,23 @@ async fn list_events(
     match state.store.list_events_filtered(query).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("error: {e}")).into_response(),
+    }
+}
+
+fn check_auth(headers: &HeaderMap, token: &Option<String>) -> Result<(), (StatusCode, String)> {
+    let Some(expected) = token else {
+        return Ok(());
+    }; // 未设置 token, 则不鉴权（可选策略）
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let ok = auth == format!("Bearer {}", expected);
+    if ok {
+        Ok(())
+    } else {
+        Err((StatusCode::UNAUTHORIZED, "unauthorized".to_string()))
     }
 }
 

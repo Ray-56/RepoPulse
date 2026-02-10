@@ -12,6 +12,7 @@ use crate::domain::EventType;
 pub struct McpServer {
     pub store: Arc<dyn EventStore>,
     pub targets: Arc<dyn TargetRepository>,
+    pub api_token: Option<String>,
 }
 
 impl McpServer {
@@ -78,11 +79,20 @@ impl McpServer {
                     let tool = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
+                    if let Some(expected) = &self.api_token {
+                        let provided = args.get("token").and_then(|v| v.as_str()).unwrap_or("");
+                        if provided != expected {
+                            self.write_error(&mut out, id, "unauthorized".to_string())
+                                .await?;
+                            continue;
+                        }
+                    }
+
                     let result = match tool {
-                        "health" => json!({"status": "ok"}),
+                        "health" => json!({"content": [{ "type": "text", "text": "ok"}]}),
 
                         "list_targets" => match self.targets.list_enabled_targets().await {
-                            Ok(t) => json!(t),
+                            Ok(t) => json!({ "content": [ { "type": "json", "json": t } ] }),
                             Err(e) => {
                                 self.write_error(&mut out, id, format!("list_targets failed: {e}"))
                                     .await?;
@@ -121,7 +131,9 @@ impl McpServer {
                             };
 
                             match self.store.list_events_filtered(q).await {
-                                Ok(items) => json!({ "items": items }),
+                                Ok(items) => {
+                                    json!({ "content": [ { "type": "json", "json": { "items": items } } ] })
+                                }
                                 Err(e) => {
                                     self.write_error(
                                         &mut out,
@@ -132,14 +144,6 @@ impl McpServer {
                                     continue;
                                 }
                             }
-
-                            // let items = self
-                            //     .store
-                            //     .list_events_filtered(q)
-                            //     .await
-                            //     .map_err(|e| e.to_string())?;
-
-                            // json!({ "items": items })
                         }
 
                         _ => {

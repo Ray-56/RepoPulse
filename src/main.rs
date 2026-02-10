@@ -116,9 +116,11 @@ async fn main() {
     };
 
     if let Some(addr) = args.http_addr.clone() {
+        let api_token = std::env::var("API_TOKEN").ok();
         let state = ApiState {
             store: store.clone(),
             targets: target_repo.clone(),
+            api_token,
         };
         let app = build_router(state);
 
@@ -139,6 +141,7 @@ async fn main() {
         let server = repopulse::interfaces::mcp::McpServer {
             store: store.clone(),
             targets: target_repo.clone(),
+            api_token: std::env::var("API_TOKEN").ok(),
         };
         if let Err(e) = server.serve().await {
             tracing::error!("mcp server error: {e}");

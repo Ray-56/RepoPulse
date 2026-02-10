@@ -9,6 +9,7 @@ services:
     environment:
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       FEISHU_WEBHOOK: ${FEISHU_WEBHOOK}
+      API_TOKEN: ${API_TOKEN}
       DATABASE_URL: sqlite:/data/state.db
     volumes:
       - ./data:/data
