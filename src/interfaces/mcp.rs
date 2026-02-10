@@ -48,25 +48,80 @@ impl McpServer {
                                 {
                                     "name": "health",
                                     "description": "Health check for RepoPulse",
-                                    "inputSchema": { "type": "object", "properties": {} }
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "token": { "type": "string", "description": "API token (required if API_TOKEN is set)"}
+                                        },
+                                        "required": []
+                                    },
+                                    "outputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "content": { "type": "object" }
+                                        }
+                                    }
                                 },
                                 {
                                     "name": "list_targets",
                                     "description": "List enabled watch targets",
-                                    "inputSchema": { "type": "object", "properties": {} }
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "token": { "type": "string", "description": "API token (required if API_TOKEN is set)"}
+                                        },
+                                        "required": []
+                                    },
+                                    "outputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                           "content": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "type": { "const": "json" },
+                                                        "json": { "type": "array" }
+                                                    }
+                                                }
+                                           }
+                                        }
+                                    }
                                 },
                                 {
                                     "name": "get_events",
-                                    "description": "Query recent events with filters",
+                                    "description": "Query recent events with filters. Returns events ordered by detected time desc.",
                                     "inputSchema": {
                                       "type": "object",
                                       "properties": {
-                                        "since": { "type": "string", "description": "e.g. 24h, 7d, 3600s" },
-                                        "label": { "type": "string" },
-                                        "type": { "type": "string", "description": "release|branch|npm|waweb" },
-                                        "subject": { "type": "string" },
+                                        "token": { "type": "string", "description": "API token (required if API_TOKEN is set)"},
+                                        "since": { "type": "string", "description": "The window: e.g. 24h, 7d, 3600s" },
+                                        "label": { "type": "string", "description": "Filter by target label (e.g. whatsapp)" },
+                                        "type": { "type": "string", "enum": ["release", "branch", "npm", "waweb"], "description": "Event type filter" },
+                                        "subject": { "type": "string", "description": "Exact subject filter (repo 'owner/repo' or package name)" },
                                         "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
-                                      }
+                                      },
+                                      "required": []
+                                    },
+                                    "outputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "content": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "type": { "const": "json" },
+                                                        "json": {
+                                                            "type": "object",
+                                                            "properties": {
+                                                                "items": { "type": "array" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             ]
