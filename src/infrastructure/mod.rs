@@ -1,5 +1,7 @@
+pub mod broadcast_publisher;
 pub mod composite_provider;
 pub mod console_notifier;
+pub mod event_bus;
 pub mod fake_provider;
 pub mod feishu_notifier;
 pub mod github_branch_provider;

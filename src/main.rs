@@ -4,11 +4,11 @@ use tracing_subscriber::EnvFilter;
 
 use repopulse::application::usecases::{HandleEventUseCase, RunOnceUseCase};
 use repopulse::infrastructure::{
-    composite_provider::CompositeWatchProvider, console_notifier::ConsoleNotifier,
-    feishu_notifier::FeishuNotifier, github_branch_provider::GitHubBranchProvider,
-    github_release_provider::GitHubReleaseProvider, memory_store::InMemoryTargetRepository,
-    multi_notifier::MultiNotifier, npm_latest_provider::NpmLatestProvider,
-    sqlite_store::SqliteEventStore,
+    broadcast_publisher, composite_provider::CompositeWatchProvider,
+    console_notifier::ConsoleNotifier, event_bus, feishu_notifier::FeishuNotifier,
+    github_branch_provider::GitHubBranchProvider, github_release_provider::GitHubReleaseProvider,
+    memory_store::InMemoryTargetRepository, multi_notifier::MultiNotifier,
+    npm_latest_provider::NpmLatestProvider, sqlite_store::SqliteEventStore,
 };
 use repopulse::interfaces::{
     config::Config,
@@ -83,6 +83,9 @@ async fn main() {
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:/data/state.db".to_string());
     let store = SqliteEventStore::new(&db_url).await.expect("sqlite store");
 
+    let event_bus = event_bus::EventBus::new(1024);
+    let publisher = broadcast_publisher::BroadcastPublisher::new(event_bus.clone());
+
     // notifiers fanout
     let mut notifiers: Vec<Box<dyn repopulse::application::Notifier>> = vec![];
     notifiers.push(Box::new(ConsoleNotifier::new()));
@@ -107,6 +110,7 @@ async fn main() {
     let handle_event = HandleEventUseCase {
         store: store.as_ref(),
         notifier: &notifier,
+        publisher: Some(&publisher),
         cooldown_seconds: cooldown,
     };
     let run_once: RunOnceUseCase<'_> = RunOnceUseCase {
@@ -121,6 +125,7 @@ async fn main() {
             store: store.clone(),
             targets: target_repo.clone(),
             api_token,
+            event_bus: Some(event_bus.clone()),
         };
         let app = build_router(state);
 

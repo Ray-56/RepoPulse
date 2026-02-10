@@ -1,21 +1,31 @@
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::{
     Json, Router,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{
+        IntoResponse,
+        sse::{Event as SseEvent, Sse},
+    },
     routing::get,
 };
 use serde::Deserialize;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
-use crate::application::{EventStore, TargetRepository};
+use crate::{
+    application::{EventStore, TargetRepository},
+    infrastructure::event_bus::EventBus,
+};
 
 #[derive(Clone)]
 pub struct ApiState {
     pub store: Arc<dyn EventStore>,
     pub targets: Arc<dyn TargetRepository>,
     pub api_token: Option<String>,
+    pub event_bus: Option<EventBus>,
 }
 
 pub fn build_router(state: ApiState) -> Router {
@@ -23,6 +33,7 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/health", get(health))
         .route("/targets", get(list_targets))
         .route("/events", get(list_events))
+        .route("/events/stream", get(stream_events))
         .with_state(state)
 }
 
@@ -99,6 +110,115 @@ async fn list_events(
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("error: {e}")).into_response(),
     }
+}
+
+#[derive(Deserialize, Clone)]
+struct StreamQuery {
+    label: Option<String>,
+    r#type: Option<String>,
+    subject: Option<String>,
+}
+
+async fn stream_events(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Query(q): Query<StreamQuery>,
+) -> impl IntoResponse {
+    if let Err((code, msg)) = check_auth(&headers, &state.api_token) {
+        return (code, msg).into_response();
+    }
+
+    let Some(bus) = state.event_bus.clone() else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "event stream not enabled".to_string(),
+        )
+            .into_response();
+    };
+
+    let rx = bus.subscribe();
+    let et_filter = q.r#type.clone();
+    let label_filter = q.label.clone();
+    let subject_filter = q.subject.clone();
+    let stream = BroadcastStream::new(rx).filter_map(move |msg| {
+        let record = match msg {
+            Ok(r) => r,
+            Err(_) => return None, // lagged/closed
+        };
+
+        // label filter
+        if let Some(label) = &label_filter {
+            if !record.labels.iter().any(|l| l == label) {
+                return None;
+            }
+        }
+
+        // subject filter
+        if let Some(subj) = &subject_filter {
+            if record.event.subject != *subj {
+                return None;
+            }
+        }
+
+        // type filter
+        if let Some(t) = &et_filter {
+            let ok = match (t.as_str(), &record.event.event_type) {
+                ("release", crate::domain::EventType::GitHubRelease) => true,
+                ("branch", crate::domain::EventType::GitHubBranch) => true,
+                ("npm", crate::domain::EventType::NpmLatest) => true,
+                ("waweb", crate::domain::EventType::WhatsAppWebVersion) => true,
+                _ => false,
+            };
+            if !ok {
+                return None;
+            }
+        }
+
+        let data = match serde_json::to_string(&record) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+
+        Some(Ok::<SseEvent, Infallible>(SseEvent::default().data(data)))
+    });
+    // let stream = BroadcastStream::new(rx).filter_map(move |msg| {
+    //     let q = q.clone();
+    //     async move {
+    //         match msg {
+    //             Ok(record) => {
+    //                 // filter by label/type/subject
+    //                 if let Some(label) = &q.label {
+    //                     if !record.labels.iter().any(|l| l == label) {
+    //                         return None;
+    //                     }
+    //                 }
+    //                 if let Some(subj) = &q.subject {
+    //                     if record.event.subject != *subj {
+    //                         return None;
+    //                     }
+    //                 }
+    //                 if let Some(t) = &q.r#type {
+    //                     let ok = match (t.as_str(), &record.event.event_type) {
+    //                         ("release", crate::domain::EventType::GitHubRelease) => true,
+    //                         ("branch", crate::domain::EventType::GitHubBranch) => true,
+    //                         ("npm", crate::domain::EventType::NpmLatest) => true,
+    //                         ("waweb", crate::domain::EventType::WhatsAppWebVersion) => true,
+    //                         _ => false,
+    //                     };
+    //                     if !ok {
+    //                         return None;
+    //                     }
+    //                 }
+
+    //                 let data = serde_json::to_string(&record).ok()?;
+    //                 Some(Ok::<SseEvent, Infallible>(SseEvent::default().data(data)))
+    //             }
+    //             Err(_) => None, // lagged or closed
+    //         }
+    //     }
+    // });
+
+    Sse::new(stream).into_response()
 }
 
 fn check_auth(headers: &HeaderMap, token: &Option<String>) -> Result<(), (StatusCode, String)> {

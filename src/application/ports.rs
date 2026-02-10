@@ -1,5 +1,6 @@
 use crate::domain::{Event, WatchTarget};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -15,7 +16,7 @@ pub enum AppError {
 
 pub type AppResult<T> = Result<T, AppError>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventRecord {
     pub event: crate::domain::Event,
     pub target_id: String,
@@ -70,4 +71,9 @@ pub trait TargetRepository: Send + Sync {
 #[async_trait]
 pub trait Notifier: Send + Sync {
     async fn notify(&self, event: &Event) -> AppResult<()>;
+}
+
+#[async_trait]
+pub trait EventPublisher: Send + Sync {
+    async fn publish(&self, record: &EventRecord) -> AppResult<()>;
 }
