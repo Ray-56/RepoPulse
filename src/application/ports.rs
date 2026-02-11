@@ -24,6 +24,16 @@ pub struct EventRecord {
     pub detected_at_epoch: i64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct EventRecordQuery {
+    pub since_epoch: Option<i64>,
+    pub after_rowid: Option<i64>,
+    pub limit: u32,
+    pub label: Option<String>,
+    pub event_type: Option<crate::domain::EventType>,
+    pub subject: Option<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct EventQuery {
     pub since_epoch: Option<i64>,
@@ -59,6 +69,13 @@ pub trait EventStore: Send + Sync {
 
     async fn list_event_records_filtered(&self, query: EventQuery) -> AppResult<Vec<EventRecord>>;
 
+    async fn list_event_records_cursor(
+        &self,
+        query: EventRecordQuery,
+    ) -> AppResult<Vec<(i64, EventRecord)>>;
+
+    async fn upsert_event_record_return_rowid(&self, record: &EventRecord) -> AppResult<i64>;
+
     async fn get_last_notified(&self, scope_key: &str) -> AppResult<Option<i64>>;
     async fn set_last_notified(&self, scope_key: &str, epoch_seconds: i64) -> AppResult<()>;
 }
@@ -78,4 +95,9 @@ pub trait Notifier: Send + Sync {
 #[async_trait]
 pub trait EventPublisher: Send + Sync {
     async fn publish(&self, record: &EventRecord) -> AppResult<()>;
+}
+
+#[async_trait]
+pub trait EventRecordPublisher: Send + Sync {
+    async fn publish(&self, rowid: i64, record: &EventRecord) -> AppResult<()>;
 }

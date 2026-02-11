@@ -4,7 +4,7 @@ use crate::domain::Event;
 pub struct HandleEventUseCase<'a> {
     pub store: &'a dyn EventStore,
     pub notifier: &'a dyn Notifier,
-    pub publisher: Option<&'a dyn crate::application::EventPublisher>,
+    pub publisher: Option<&'a dyn crate::application::EventRecordPublisher>,
     pub cooldown_seconds: u64, // 0 means disabled
 }
 
@@ -28,10 +28,11 @@ impl<'a> HandleEventUseCase<'a> {
             labels: labels.to_vec(),
             detected_at_epoch: now_epoch,
         };
-        self.store.append_event_record(&record).await?;
+        let rowid = self.store.upsert_event_record_return_rowid(&record).await?;
         self.store.mark_seen(&event.event_id).await?;
+        // publish as fact stream (independent of notification)
         if let Some(p) = self.publisher {
-            let _ = p.publish(&record).await?;
+            let _ = p.publish(rowid, &record).await;
         }
 
         // 3) cooldown policy (ByTargetAndType)

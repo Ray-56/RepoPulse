@@ -131,6 +131,11 @@ async fn stream_events(
         return (code, msg).into_response();
     }
 
+    let after_rowid = headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<i64>().ok());
+
     let Some(bus) = state.event_bus.clone() else {
         return (
             StatusCode::NOT_IMPLEMENTED,
@@ -183,20 +188,17 @@ async fn stream_events(
     }
 
     // 1) 先查历史
-    let history_query = crate::application::EventQuery {
+    let history_query = crate::application::EventRecordQuery {
         since_epoch,
+        after_rowid,
         limit: replay,
         label: q.label.clone(),
         event_type,
         subject: q.subject.clone(),
     };
 
-    let history = match state.store.list_event_records_filtered(history_query).await {
-        Ok(mut items) => {
-            // DB 查出来通常是 desc，希望 replay 从旧到新
-            items.reverse();
-            items
-        }
+    let history = match state.store.list_event_records_cursor(history_query).await {
+        Ok(items) => items,
         Err(e) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("error: {e}")).into_response();
         }
@@ -209,7 +211,7 @@ async fn stream_events(
     let type_filter = q.r#type.clone();
 
     let live = BroadcastStream::new(rx).filter_map(move |msg| {
-        let record = match msg {
+        let (rowid, record) = match msg {
             Ok(r) => r,
             Err(_) => return None, // lagged/closed
         };
@@ -241,20 +243,20 @@ async fn stream_events(
         }
 
         let data = serde_json::to_string(&record).ok()?;
-        let id = format!("{}:{}", record.detected_at_epoch, record.event.event_id);
-
         Some(Ok::<SseEvent, Infallible>(
-            SseEvent::default().event("event").id(id).data(data),
+            SseEvent::default()
+                .event("event")
+                .id(rowid.to_string())
+                .data(data),
         ))
     });
 
     // 3) "历史 + 实时" 合并，拼成 SSE stream
     let out_stream = async_stream! {
         // history as "replay"
-        for e in history {
-            let data = serde_json::to_string(&e).unwrap_or_else(|_| "{}".to_string());
-            let id = format!("{}:{}", e.detected_at_epoch, e.event.event_id);
-            yield Ok::<SseEvent, Infallible>(SseEvent::default().event("replay").id(id).data(data));
+        for (rowid, r) in history {
+            let data = serde_json::to_string(&r).unwrap_or_else(|_| "{}".to_string());
+            yield Ok::<SseEvent, Infallible>(SseEvent::default().event("replay").id(rowid.to_string()).data(data));
         }
 
         // live events

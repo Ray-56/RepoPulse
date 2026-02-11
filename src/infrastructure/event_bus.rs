@@ -4,7 +4,7 @@ use crate::application::EventRecord;
 
 #[derive(Clone)]
 pub struct EventBus {
-    tx: broadcast::Sender<EventRecord>,
+    tx: broadcast::Sender<(i64, EventRecord)>,
 }
 
 impl EventBus {
@@ -13,12 +13,12 @@ impl EventBus {
         Self { tx }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<EventRecord> {
+    pub fn subscribe(&self) -> broadcast::Receiver<(i64, EventRecord)> {
         self.tx.subscribe()
     }
 
-    pub fn publish(&self, record: EventRecord) {
+    pub fn publish(&self, rowid: i64, record: EventRecord) {
         // ignore lag errors; consumers many miss some events if slow
-        let _ = self.tx.send(record);
+        let _ = self.tx.send((rowid, record));
     }
 }

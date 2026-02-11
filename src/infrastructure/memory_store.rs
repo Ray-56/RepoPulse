@@ -113,6 +113,39 @@ impl EventStore for InMemoryEventStore {
         v.truncate(limit as usize);
         Ok(v)
     }
+
+    async fn upsert_event_record_return_rowid(
+        &self,
+        record: &crate::application::EventRecord,
+    ) -> AppResult<i64> {
+        // in-memory 没 rowid：用一个伪 rowid（events 长度）即可保证单调
+        self.append_event(&record.event).await?;
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| AppError::Storage("lock poisoned".into()))?;
+        Ok(inner.events.len() as i64)
+    }
+
+    async fn list_event_records_cursor(
+        &self,
+        query: crate::application::EventRecordQuery,
+    ) -> AppResult<Vec<(i64, crate::application::EventRecord)>> {
+        let events = self.list_events(query.limit).await?;
+        let mut out = vec![];
+        for (i, e) in events.into_iter().enumerate() {
+            out.push((
+                i as i64,
+                crate::application::EventRecord {
+                    event: e,
+                    target_id: "".into(),
+                    labels: vec![],
+                    detected_at_epoch: 0,
+                },
+            ));
+        }
+        Ok(out)
+    }
 }
 
 #[derive(Clone)]

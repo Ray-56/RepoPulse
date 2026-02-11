@@ -509,6 +509,185 @@ impl EventStore for SqliteEventStore {
 
         Ok(out)
     }
+
+    async fn list_event_records_cursor(
+        &self,
+        query: crate::application::EventRecordQuery,
+    ) -> AppResult<Vec<(i64, crate::application::EventRecord)>> {
+        use sqlx::{QueryBuilder, Row};
+
+        let mut qb = QueryBuilder::new(
+            r#"
+            SELECT
+                rowid as rowid,
+                event_id, event_type, source, subject, old_value, new_value,
+                occurred_at, detected_at, url,
+                target_id, labels, detected_at_epoch
+            FROM events
+            WHERE 1=1
+            "#,
+        );
+
+        if let Some(after) = query.after_rowid {
+            qb.push(" AND rowid >");
+            qb.push_bind(after);
+        }
+        if let Some(since) = query.since_epoch {
+            qb.push(" AND detected_at_epoch >= ");
+            qb.push_bind(since);
+        }
+        if let Some(label) = query.label {
+            qb.push(" AND labels LIKE ");
+            qb.push_bind(format!("%{}%", label));
+        }
+        if let Some(et) = query.event_type {
+            qb.push(" AND event_type = ");
+            qb.push_bind(format!("{:?}", et));
+        }
+        if let Some(subj) = query.subject {
+            qb.push(" AND subject = ");
+            qb.push_bind(subj);
+        }
+
+        // replay 要从旧到新，所以 ORDER BY rowid ASC
+        qb.push(" ORDER BY rowid ASC LIMIT ");
+        qb.push_bind(query.limit.min(500) as i64);
+
+        let rows = qb
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Storage(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let rowid: i64 = row
+                .try_get("rowid")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+
+            let event_id: String = row
+                .try_get("event_id")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let event_type_s: String = row
+                .try_get("event_type")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let source_s: String = row
+                .try_get("source")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let subject: String = row
+                .try_get("subject")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let old_value: Option<String> = row
+                .try_get("old_value")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let new_value: String = row
+                .try_get("new_value")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let occurred_at: Option<String> = row
+                .try_get("occurred_at")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let detected_at: String = row
+                .try_get("detected_at")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let url: Option<String> = row
+                .try_get("url")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+
+            let target_id: Option<String> = row.try_get("target_id").ok();
+            let labels: Option<String> = row.try_get("labels").ok();
+            let detected_at_epoch: i64 = row.try_get("detected_at_epoch").unwrap_or(0);
+
+            let event_type = match event_type_s.as_str() {
+                "GitHubRelease" => crate::domain::EventType::GitHubRelease,
+                "GitHubBranch" => crate::domain::EventType::GitHubBranch,
+                "NpmLatest" => crate::domain::EventType::NpmLatest,
+                "WhatsAppWebVersion" => crate::domain::EventType::WhatsAppWebVersion,
+                _ => crate::domain::EventType::GitHubRelease,
+            };
+
+            let source = match source_s.as_str() {
+                "github" => crate::domain::Source::GitHub,
+                "npm" => crate::domain::Source::Npm,
+                "whatsapp-web" => crate::domain::Source::WhatsAppWeb,
+                _ => crate::domain::Source::GitHub,
+            };
+
+            let labels_vec = labels
+                .unwrap_or_default()
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
+
+            let record = crate::application::EventRecord {
+                event: crate::domain::Event {
+                    event_id: event_id.clone(),
+                    event_type,
+                    source,
+                    subject,
+                    old_value,
+                    new_value,
+                    occurred_at,
+                    detected_at,
+                    url,
+                },
+                target_id: target_id.unwrap_or_default(),
+                labels: labels_vec,
+                detected_at_epoch,
+            };
+
+            out.push((rowid, record));
+        }
+
+        Ok(out)
+    }
+
+    async fn upsert_event_record_return_rowid(
+        &self,
+        record: &crate::application::EventRecord,
+    ) -> AppResult<i64> {
+        let e = &record.event;
+        let labels_joined = if record.labels.is_empty() {
+            None
+        } else {
+            Some(record.labels.join(","))
+        };
+
+        // 1) insert ignore
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO events(
+                event_id, event_type, source, subject,
+                old_value, new_value, occurred_at, detected_at, url,
+                target_id, labels, detected_at_epoch
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&e.event_id)
+        .bind(format!("{:?}", e.event_type))
+        .bind(e.source.to_string())
+        .bind(&e.subject)
+        .bind(e.old_value.as_deref())
+        .bind(&e.new_value)
+        .bind(e.occurred_at.as_deref())
+        .bind(&e.detected_at)
+        .bind(e.url.as_deref())
+        .bind(&record.target_id)
+        .bind(labels_joined.as_deref())
+        .bind(record.detected_at_epoch)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+
+        // 2) select rowid (works for both inserted and existing)
+        let row: (i64,) = sqlx::query_as("SELECT rowid FROM events WHERE event_id = ? LIMIT 1")
+            .bind(&e.event_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| AppError::Storage(e.to_string()))?;
+
+        Ok(row.0)
+    }
 }
 
 fn now_string() -> String {
