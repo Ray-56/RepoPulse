@@ -1,5 +1,5 @@
-use std::convert::Infallible;
 use std::sync::Arc;
+use std::{convert::Infallible, time::Duration};
 
 use async_stream::stream as async_stream;
 use axum::{
@@ -261,9 +261,34 @@ async fn stream_events(
 
         // live events
         tokio::pin!(live);
-        while let Some(item) = live.next().await {
-            yield item;
+
+        // heartbeat every 15s
+        let mut ticker = tokio::time::interval(Duration::from_secs(15));
+
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    let data = now_epoch().to_string();
+                    yield Ok::<SseEvent, Infallible>(
+                        SseEvent::default()
+                            .event("ping")
+                            .data(data)
+                    );
+                }
+                maybe = live.next() => {
+                    match maybe {
+                        Some(item) => {
+                            yield item;
+                        }
+                        None => break,
+                    }
+                }
+            }
         }
+
+        // while let Some(item) = live.next().await {
+        //     yield item;
+        // }
     };
 
     return Sse::new(out_stream).into_response();
