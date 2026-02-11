@@ -140,7 +140,7 @@ async fn stream_events(
     };
 
     let replay = q.replay.unwrap_or(20).min(200);
-    let since_epoch = match q.since.as_deref() {
+    let mut since_epoch = match q.since.as_deref() {
         Some(v) => match parse_since_to_epoch(v) {
             Some(e) => Some(e),
             None => {
@@ -153,6 +153,7 @@ async fn stream_events(
         },
         None => None,
     };
+
     let event_type = match q.r#type.as_deref() {
         Some(t) => match parse_type(t) {
             Some(et) => Some(et),
@@ -166,6 +167,20 @@ async fn stream_events(
         },
         None => None,
     };
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let last_epoch_from_header: Option<i64> = last_event_id
+        .as_deref()
+        .and_then(|id| id.split(":").next())
+        .and_then(|s| s.parse::<i64>().ok());
+
+    // If client provided  Last-Event-ID, prefer it (more precise resume point)
+    if let Some(last_epoch) = last_epoch_from_header {
+        // +1 avoids replaying the same second again (simple dedup strategy)
+        since_epoch = Some(last_epoch.saturating_add(1));
+    }
 
     // 1) 先查历史
     let history_query = crate::application::EventQuery {
@@ -176,7 +191,7 @@ async fn stream_events(
         subject: q.subject.clone(),
     };
 
-    let history = match state.store.list_events_filtered(history_query).await {
+    let history = match state.store.list_event_records_filtered(history_query).await {
         Ok(mut items) => {
             // DB 查出来通常是 desc，希望 replay 从旧到新
             items.reverse();
@@ -226,8 +241,10 @@ async fn stream_events(
         }
 
         let data = serde_json::to_string(&record).ok()?;
+        let id = format!("{}:{}", record.detected_at_epoch, record.event.event_id);
+
         Some(Ok::<SseEvent, Infallible>(
-            SseEvent::default().event("event").data(data),
+            SseEvent::default().event("event").id(id).data(data),
         ))
     });
 
@@ -236,7 +253,8 @@ async fn stream_events(
         // history as "replay"
         for e in history {
             let data = serde_json::to_string(&e).unwrap_or_else(|_| "{}".to_string());
-            yield Ok::<SseEvent, Infallible>(SseEvent::default().event("replay").data(data));
+            let id = format!("{}:{}", e.detected_at_epoch, e.event.event_id);
+            yield Ok::<SseEvent, Infallible>(SseEvent::default().event("replay").id(id).data(data));
         }
 
         // live events
@@ -247,90 +265,6 @@ async fn stream_events(
     };
 
     return Sse::new(out_stream).into_response();
-
-    // let rx = bus.subscribe();
-    // let et_filter = q.r#type.clone();
-    // let label_filter = q.label.clone();
-    // let subject_filter = q.subject.clone();
-    // let stream = BroadcastStream::new(rx).filter_map(move |msg| {
-    //     let record = match msg {
-    //         Ok(r) => r,
-    //         Err(_) => return None, // lagged/closed
-    //     };
-
-    //     // label filter
-    //     if let Some(label) = &label_filter {
-    //         if !record.labels.iter().any(|l| l == label) {
-    //             return None;
-    //         }
-    //     }
-
-    //     // subject filter
-    //     if let Some(subj) = &subject_filter {
-    //         if record.event.subject != *subj {
-    //             return None;
-    //         }
-    //     }
-
-    //     // type filter
-    //     if let Some(t) = &et_filter {
-    //         let ok = match (t.as_str(), &record.event.event_type) {
-    //             ("release", crate::domain::EventType::GitHubRelease) => true,
-    //             ("branch", crate::domain::EventType::GitHubBranch) => true,
-    //             ("npm", crate::domain::EventType::NpmLatest) => true,
-    //             ("waweb", crate::domain::EventType::WhatsAppWebVersion) => true,
-    //             _ => false,
-    //         };
-    //         if !ok {
-    //             return None;
-    //         }
-    //     }
-
-    //     let data = match serde_json::to_string(&record) {
-    //         Ok(s) => s,
-    //         Err(_) => return None,
-    //     };
-
-    //     Some(Ok::<SseEvent, Infallible>(SseEvent::default().data(data)))
-    // });
-    // // let stream = BroadcastStream::new(rx).filter_map(move |msg| {
-    // //     let q = q.clone();
-    // //     async move {
-    // //         match msg {
-    // //             Ok(record) => {
-    // //                 // filter by label/type/subject
-    // //                 if let Some(label) = &q.label {
-    // //                     if !record.labels.iter().any(|l| l == label) {
-    // //                         return None;
-    // //                     }
-    // //                 }
-    // //                 if let Some(subj) = &q.subject {
-    // //                     if record.event.subject != *subj {
-    // //                         return None;
-    // //                     }
-    // //                 }
-    // //                 if let Some(t) = &q.r#type {
-    // //                     let ok = match (t.as_str(), &record.event.event_type) {
-    // //                         ("release", crate::domain::EventType::GitHubRelease) => true,
-    // //                         ("branch", crate::domain::EventType::GitHubBranch) => true,
-    // //                         ("npm", crate::domain::EventType::NpmLatest) => true,
-    // //                         ("waweb", crate::domain::EventType::WhatsAppWebVersion) => true,
-    // //                         _ => false,
-    // //                     };
-    // //                     if !ok {
-    // //                         return None;
-    // //                     }
-    // //                 }
-
-    // //                 let data = serde_json::to_string(&record).ok()?;
-    // //                 Some(Ok::<SseEvent, Infallible>(SseEvent::default().data(data)))
-    // //             }
-    // //             Err(_) => None, // lagged or closed
-    // //         }
-    // //     }
-    // // });
-
-    // Sse::new(stream).into_response()
 }
 
 fn check_auth(headers: &HeaderMap, token: &Option<String>) -> Result<(), (StatusCode, String)> {
@@ -380,7 +314,7 @@ fn parse_type(t: &str) -> Option<crate::domain::EventType> {
         "release" => Some(crate::domain::EventType::GitHubRelease),
         "branch" => Some(crate::domain::EventType::GitHubBranch),
         "npm" => Some(crate::domain::EventType::NpmLatest),
-        "whatsapp-web" => Some(crate::domain::EventType::WhatsAppWebVersion),
+        "waweb" => Some(crate::domain::EventType::WhatsAppWebVersion),
         _ => None,
     }
 }

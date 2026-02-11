@@ -387,6 +387,128 @@ impl EventStore for SqliteEventStore {
 
         Ok(out)
     }
+
+    async fn list_event_records_filtered(
+        &self,
+        query: crate::application::EventQuery,
+    ) -> AppResult<Vec<crate::application::EventRecord>> {
+        use sqlx::{QueryBuilder, Row};
+
+        let mut qb = QueryBuilder::new(
+            r#"
+            SELECT
+                event_id, event_type, source, subject, old_value, new_value,
+                occurred_at, detected_at, url,
+                target_id, labels, detected_at_epoch
+            FROM events
+            WHERE 1=1
+            "#,
+        );
+
+        if let Some(since) = query.since_epoch {
+            qb.push(" AND detected_at_epoch >=");
+            qb.push_bind(since);
+        }
+        if let Some(label) = query.label {
+            qb.push(" AND labels LIKE ");
+            qb.push_bind(format!("%{}%", label));
+        }
+        if let Some(et) = query.event_type {
+            qb.push(" AND event_type = ");
+            qb.push_bind(format!("{:?}", et));
+        }
+        if let Some(subj) = query.subject {
+            qb.push(" AND subject = ");
+            qb.push_bind(subj);
+        }
+
+        qb.push(" ORDER BY detected_at_epoch DESC, rowid DESC LIMIT ");
+        qb.push_bind(query.limit.min(500) as i64);
+
+        let rows = qb
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Storage(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let event_id: String = row
+                .try_get("event_id")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let event_type_s: String = row
+                .try_get("event_type")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let source_s: String = row
+                .try_get("source")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let subject: String = row
+                .try_get("subject")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let old_value: Option<String> = row
+                .try_get("old_value")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let new_value: String = row
+                .try_get("new_value")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let occurred_at: Option<String> = row
+                .try_get("occurred_at")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let detected_at: String = row
+                .try_get("detected_at")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+            let url: Option<String> = row
+                .try_get("url")
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+
+            let target_id: Option<String> = row.try_get("target_id").ok();
+            let labels: Option<String> = row.try_get("labels").ok();
+            let detected_at_epoch: i64 = row.try_get("detected_at_epoch").unwrap_or(0);
+
+            let event_type = match event_type_s.as_str() {
+                "GitHubRelease" => crate::domain::EventType::GitHubRelease,
+                "GitHubBranch" => crate::domain::EventType::GitHubBranch,
+                "NpmLatest" => crate::domain::EventType::NpmLatest,
+                "WhatsAppWebVersion" => crate::domain::EventType::WhatsAppWebVersion,
+                _ => crate::domain::EventType::GitHubRelease,
+            };
+
+            let source = match source_s.as_str() {
+                "github" => crate::domain::Source::GitHub,
+                "npm" => crate::domain::Source::Npm,
+                "whatsapp-web" => crate::domain::Source::WhatsAppWeb,
+                _ => crate::domain::Source::GitHub,
+            };
+
+            let labels_vec = labels
+                .unwrap_or_default()
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
+
+            let record = crate::application::EventRecord {
+                event: crate::domain::Event {
+                    event_id: event_id.clone(),
+                    event_type,
+                    source,
+                    subject,
+                    old_value,
+                    new_value,
+                    occurred_at,
+                    detected_at,
+                    url,
+                },
+                target_id: target_id.unwrap_or_default(),
+                labels: labels_vec,
+                detected_at_epoch,
+            };
+
+            out.push(record);
+        }
+
+        Ok(out)
+    }
 }
 
 fn now_string() -> String {

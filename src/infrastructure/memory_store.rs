@@ -67,6 +67,23 @@ impl EventStore for InMemoryEventStore {
         self.list_events(limit).await
     }
 
+    async fn list_event_records_filtered(
+        &self,
+        query: crate::application::EventQuery,
+    ) -> AppResult<Vec<crate::application::EventRecord>> {
+        let events = self.list_events(query.limit).await?;
+        let out = events
+            .into_iter()
+            .map(|e| crate::application::EventRecord {
+                detected_at_epoch: 0,
+                target_id: "".to_string(),
+                labels: vec![],
+                event: e,
+            })
+            .collect();
+        Ok(out)
+    }
+
     async fn get_last_notified(&self, scope_key: &str) -> AppResult<Option<i64>> {
         let inner = self
             .inner

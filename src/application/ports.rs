@@ -57,6 +57,8 @@ pub trait EventStore: Send + Sync {
     // 新接口: 用于过滤查询
     async fn list_events_filtered(&self, query: EventQuery) -> AppResult<Vec<Event>>;
 
+    async fn list_event_records_filtered(&self, query: EventQuery) -> AppResult<Vec<EventRecord>>;
+
     async fn get_last_notified(&self, scope_key: &str) -> AppResult<Option<i64>>;
     async fn set_last_notified(&self, scope_key: &str, epoch_seconds: i64) -> AppResult<()>;
 }
