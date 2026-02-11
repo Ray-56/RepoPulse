@@ -1,6 +1,11 @@
 poll_interval_seconds: 600
 cooldown_seconds: 3600
 
+sse:
+  ping_interval_seconds: 15
+  replay_default: 20
+  replay_max: 200
+
 targets:
   - type: github_release
     repo: "pedroslopez/whatsapp-web.js"

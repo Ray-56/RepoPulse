@@ -27,6 +27,14 @@ pub struct ApiState {
     pub targets: Arc<dyn TargetRepository>,
     pub api_token: Option<String>,
     pub event_bus: Option<EventBus>,
+    pub sse_cfg: SseRuntimeCfg,
+}
+
+#[derive(Clone)]
+pub struct SseRuntimeCfg {
+    pub ping_interval_seconds: u64,
+    pub replay_default: u32,
+    pub replay_max: u32,
 }
 
 pub fn build_router(state: ApiState) -> Router {
@@ -144,7 +152,10 @@ async fn stream_events(
             .into_response();
     };
 
-    let replay = q.replay.unwrap_or(20).min(200);
+    let replay = q
+        .replay
+        .unwrap_or(state.sse_cfg.replay_default)
+        .min(state.sse_cfg.replay_max);
     let mut since_epoch = match q.since.as_deref() {
         Some(v) => match parse_since_to_epoch(v) {
             Some(e) => Some(e),
@@ -262,8 +273,7 @@ async fn stream_events(
         // live events
         tokio::pin!(live);
 
-        // heartbeat every 15s
-        let mut ticker = tokio::time::interval(Duration::from_secs(15));
+        let mut ticker = tokio::time::interval(Duration::from_secs(state.sse_cfg.ping_interval_seconds));
 
         loop {
             tokio::select! {

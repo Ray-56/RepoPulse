@@ -6,7 +6,15 @@ use crate::domain::{RepoId, WatchKind, WatchTarget};
 pub struct Config {
     pub poll_interval_seconds: u64,
     pub cooldown_seconds: Option<u64>,
+    pub sse: Option<SseCfg>,
     pub targets: Vec<TargetCfg>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SseCfg {
+    pub ping_interval_seconds: Option<u64>,
+    pub replay_default: Option<u32>,
+    pub replay_max: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]

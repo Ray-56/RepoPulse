@@ -60,6 +60,20 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    let sse_cfg = {
+        let c = cfg.sse.clone();
+        let ping = c
+            .as_ref()
+            .and_then(|x| x.ping_interval_seconds)
+            .unwrap_or(15);
+        let replay_default = c.as_ref().and_then(|x| x.replay_default).unwrap_or(20);
+        let replay_max = c.as_ref().and_then(|x| x.replay_max).unwrap_or(200);
+        repopulse::interfaces::http_api::SseRuntimeCfg {
+            ping_interval_seconds: ping,
+            replay_default,
+            replay_max,
+        }
+    };
 
     let targets = match cfg.to_watch_targets() {
         Ok(t) => t,
@@ -126,6 +140,7 @@ async fn main() {
             targets: target_repo.clone(),
             api_token,
             event_bus: Some(event_bus.clone()),
+            sse_cfg,
         };
         let app = build_router(state);
 
