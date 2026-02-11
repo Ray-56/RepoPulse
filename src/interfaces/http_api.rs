@@ -1,6 +1,7 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
+use async_stream::stream as async_stream;
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -114,8 +115,10 @@ async fn list_events(
 
 #[derive(Deserialize, Clone)]
 struct StreamQuery {
+    replay: Option<u32>,   // e.g. 20
+    since: Option<String>, // e.g. "24h" | "7d" | "3600s"
     label: Option<String>,
-    r#type: Option<String>,
+    r#type: Option<String>, // e.g. "release" | "branch" | "npm" | "waweb"
     subject: Option<String>,
 }
 
@@ -136,11 +139,61 @@ async fn stream_events(
             .into_response();
     };
 
+    let replay = q.replay.unwrap_or(20).min(200);
+    let since_epoch = match q.since.as_deref() {
+        Some(v) => match parse_since_to_epoch(v) {
+            Some(e) => Some(e),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "invalid since (use 24h/7d/3600s)".to_string(),
+                )
+                    .into_response();
+            }
+        },
+        None => None,
+    };
+    let event_type = match q.r#type.as_deref() {
+        Some(t) => match parse_type(t) {
+            Some(et) => Some(et),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "invalid type (release/branch/npm/waweb)".to_string(),
+                )
+                    .into_response();
+            }
+        },
+        None => None,
+    };
+
+    // 1) 先查历史
+    let history_query = crate::application::EventQuery {
+        since_epoch,
+        limit: replay,
+        label: q.label.clone(),
+        event_type,
+        subject: q.subject.clone(),
+    };
+
+    let history = match state.store.list_events_filtered(history_query).await {
+        Ok(mut items) => {
+            // DB 查出来通常是 desc，希望 replay 从旧到新
+            items.reverse();
+            items
+        }
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("error: {e}")).into_response();
+        }
+    };
+
+    // 2) 再订阅实时
     let rx = bus.subscribe();
-    let et_filter = q.r#type.clone();
     let label_filter = q.label.clone();
     let subject_filter = q.subject.clone();
-    let stream = BroadcastStream::new(rx).filter_map(move |msg| {
+    let type_filter = q.r#type.clone();
+
+    let live = BroadcastStream::new(rx).filter_map(move |msg| {
         let record = match msg {
             Ok(r) => r,
             Err(_) => return None, // lagged/closed
@@ -152,16 +205,14 @@ async fn stream_events(
                 return None;
             }
         }
-
         // subject filter
         if let Some(subj) = &subject_filter {
             if record.event.subject != *subj {
                 return None;
             }
         }
-
         // type filter
-        if let Some(t) = &et_filter {
+        if let Some(t) = &type_filter {
             let ok = match (t.as_str(), &record.event.event_type) {
                 ("release", crate::domain::EventType::GitHubRelease) => true,
                 ("branch", crate::domain::EventType::GitHubBranch) => true,
@@ -174,51 +225,112 @@ async fn stream_events(
             }
         }
 
-        let data = match serde_json::to_string(&record) {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
-
-        Some(Ok::<SseEvent, Infallible>(SseEvent::default().data(data)))
+        let data = serde_json::to_string(&record).ok()?;
+        Some(Ok::<SseEvent, Infallible>(
+            SseEvent::default().event("event").data(data),
+        ))
     });
-    // let stream = BroadcastStream::new(rx).filter_map(move |msg| {
-    //     let q = q.clone();
-    //     async move {
-    //         match msg {
-    //             Ok(record) => {
-    //                 // filter by label/type/subject
-    //                 if let Some(label) = &q.label {
-    //                     if !record.labels.iter().any(|l| l == label) {
-    //                         return None;
-    //                     }
-    //                 }
-    //                 if let Some(subj) = &q.subject {
-    //                     if record.event.subject != *subj {
-    //                         return None;
-    //                     }
-    //                 }
-    //                 if let Some(t) = &q.r#type {
-    //                     let ok = match (t.as_str(), &record.event.event_type) {
-    //                         ("release", crate::domain::EventType::GitHubRelease) => true,
-    //                         ("branch", crate::domain::EventType::GitHubBranch) => true,
-    //                         ("npm", crate::domain::EventType::NpmLatest) => true,
-    //                         ("waweb", crate::domain::EventType::WhatsAppWebVersion) => true,
-    //                         _ => false,
-    //                     };
-    //                     if !ok {
-    //                         return None;
-    //                     }
-    //                 }
 
-    //                 let data = serde_json::to_string(&record).ok()?;
-    //                 Some(Ok::<SseEvent, Infallible>(SseEvent::default().data(data)))
-    //             }
-    //             Err(_) => None, // lagged or closed
+    // 3) "历史 + 实时" 合并，拼成 SSE stream
+    let out_stream = async_stream! {
+        // history as "replay"
+        for e in history {
+            let data = serde_json::to_string(&e).unwrap_or_else(|_| "{}".to_string());
+            yield Ok::<SseEvent, Infallible>(SseEvent::default().event("replay").data(data));
+        }
+
+        // live events
+        tokio::pin!(live);
+        while let Some(item) = live.next().await {
+            yield item;
+        }
+    };
+
+    return Sse::new(out_stream).into_response();
+
+    // let rx = bus.subscribe();
+    // let et_filter = q.r#type.clone();
+    // let label_filter = q.label.clone();
+    // let subject_filter = q.subject.clone();
+    // let stream = BroadcastStream::new(rx).filter_map(move |msg| {
+    //     let record = match msg {
+    //         Ok(r) => r,
+    //         Err(_) => return None, // lagged/closed
+    //     };
+
+    //     // label filter
+    //     if let Some(label) = &label_filter {
+    //         if !record.labels.iter().any(|l| l == label) {
+    //             return None;
     //         }
     //     }
-    // });
 
-    Sse::new(stream).into_response()
+    //     // subject filter
+    //     if let Some(subj) = &subject_filter {
+    //         if record.event.subject != *subj {
+    //             return None;
+    //         }
+    //     }
+
+    //     // type filter
+    //     if let Some(t) = &et_filter {
+    //         let ok = match (t.as_str(), &record.event.event_type) {
+    //             ("release", crate::domain::EventType::GitHubRelease) => true,
+    //             ("branch", crate::domain::EventType::GitHubBranch) => true,
+    //             ("npm", crate::domain::EventType::NpmLatest) => true,
+    //             ("waweb", crate::domain::EventType::WhatsAppWebVersion) => true,
+    //             _ => false,
+    //         };
+    //         if !ok {
+    //             return None;
+    //         }
+    //     }
+
+    //     let data = match serde_json::to_string(&record) {
+    //         Ok(s) => s,
+    //         Err(_) => return None,
+    //     };
+
+    //     Some(Ok::<SseEvent, Infallible>(SseEvent::default().data(data)))
+    // });
+    // // let stream = BroadcastStream::new(rx).filter_map(move |msg| {
+    // //     let q = q.clone();
+    // //     async move {
+    // //         match msg {
+    // //             Ok(record) => {
+    // //                 // filter by label/type/subject
+    // //                 if let Some(label) = &q.label {
+    // //                     if !record.labels.iter().any(|l| l == label) {
+    // //                         return None;
+    // //                     }
+    // //                 }
+    // //                 if let Some(subj) = &q.subject {
+    // //                     if record.event.subject != *subj {
+    // //                         return None;
+    // //                     }
+    // //                 }
+    // //                 if let Some(t) = &q.r#type {
+    // //                     let ok = match (t.as_str(), &record.event.event_type) {
+    // //                         ("release", crate::domain::EventType::GitHubRelease) => true,
+    // //                         ("branch", crate::domain::EventType::GitHubBranch) => true,
+    // //                         ("npm", crate::domain::EventType::NpmLatest) => true,
+    // //                         ("waweb", crate::domain::EventType::WhatsAppWebVersion) => true,
+    // //                         _ => false,
+    // //                     };
+    // //                     if !ok {
+    // //                         return None;
+    // //                     }
+    // //                 }
+
+    // //                 let data = serde_json::to_string(&record).ok()?;
+    // //                 Some(Ok::<SseEvent, Infallible>(SseEvent::default().data(data)))
+    // //             }
+    // //             Err(_) => None, // lagged or closed
+    // //         }
+    // //     }
+    // // });
+
+    // Sse::new(stream).into_response()
 }
 
 fn check_auth(headers: &HeaderMap, token: &Option<String>) -> Result<(), (StatusCode, String)> {
